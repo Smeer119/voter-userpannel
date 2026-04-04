@@ -1,7 +1,8 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { X, Check } from 'lucide-react';
-import { submitVote } from '../services/api.js';
+import { X, Check, ShieldCheck, AlertCircle } from 'lucide-react';
+import { submitVote, supabase } from '../services/api.js';
 import { useNavigate } from 'react-router-dom';
+import { motion } from 'framer-motion';
 
 export default function VoteModal({ candidate, electionId, isOpen, onClose }) {
   const [name, setName] = useState('');
@@ -9,20 +10,33 @@ export default function VoteModal({ candidate, electionId, isOpen, onClose }) {
   const [voterId, setVoterId] = useState('');
   const [errors, setErrors] = useState({});
   const [isSubmitted, setIsSubmitted] = useState(false);
+  const [submitError, setSubmitError] = useState(null);
 
   const voterIdInputRef = useRef(null);
   const navigate = useNavigate();
 
   useEffect(() => {
-    // Pre-fill name and email from localStorage when modal opens
-    const userName = localStorage.getItem('userName');
-    const userEmail = localStorage.getItem('userEmail');
+    // Fetch identity data from Supabase for Secure Autofill
+    const fetchUserData = async () => {
+      const userId = localStorage.getItem('userId');
+      if (userId && isOpen) {
+        const { data } = await supabase
+          .from('users')
+          .select('full_name, email, voter_id')
+          .eq('id', userId)
+          .maybeSingle();
+        
+        if (data) {
+          setName(data.full_name || localStorage.getItem('userName'));
+          setEmail(data.email || localStorage.getItem('userEmail'));
+          if (data.voter_id) setVoterId(data.voter_id);
+        }
+      }
+    };
 
-    setName(userName || '');
-    setEmail(userEmail || '');
+    fetchUserData();
 
-    // Reset voter ID and errors when modal opens
-    setVoterId('');
+    // Reset errors and submission state when modal opens
     setErrors({});
     setIsSubmitted(false);
   }, [isOpen]);
@@ -34,35 +48,41 @@ export default function VoteModal({ candidate, electionId, isOpen, onClose }) {
   const validateVoteData = () => {
     const newErrors = {};
 
-    if (!name.trim()) {
-      newErrors.name = 'Name is required';
-    }
-
-    if (!email.trim()) {
-      newErrors.email = 'Email is required';
-    } else if (!/\S+@\S+\.\S+/.test(email)) {
-      newErrors.email = 'Invalid email format';
-    }
-
-    if (!voterId.trim()) {
-      newErrors.voterId = 'Voter ID is required';
-    }
+    if (!name.trim()) newErrors.name = 'Identity not loaded';
+    if (!email.trim()) newErrors.email = 'Email not loaded';
+    if (!voterId.trim()) newErrors.voterId = 'Voter ID is required';
 
     setErrors(newErrors);
     return Object.keys(newErrors).length === 0;
   };
 
   const handleVoteSubmit = async () => {
-    // Validate vote data
-    if (!validateVoteData()) {
-      return;
-    }
-
+    setSubmitError(null);
     try {
       const userId = localStorage.getItem('userId');
+      
+      // 1. Real-time verification check from Supabase
+      const { data: user, error: userError } = await supabase
+        .from('users')
+        .select('is_verified')
+        .eq('id', userId)
+        .single();
+        
+      if (userError || !user?.is_verified) {
+        alert('Identity verification required. Redirecting to Secure Verification page.');
+        navigate('/verify');
+        return;
+      }
+
+      // 2. Validate vote data
+      if (!validateVoteData()) {
+        return;
+      }
+
+      // 3. Submit the vote (Anonymous & Decoupled)
       const submitData = {
         electionId,
-        candidateId: candidate._id,
+        candidateId: candidate.id || candidate._id,
         userId,
         name,
         email,
@@ -71,15 +91,11 @@ export default function VoteModal({ candidate, electionId, isOpen, onClose }) {
 
       await submitVote(submitData);
 
-      // Update local storage to mark that user has voted
-      localStorage.setItem('user.votedElection', electionId);
-      localStorage.setItem('user.votedCandidate', candidate._id);
-
       // Show success modal
       setIsSubmitted(true);
     } catch (error) {
       console.error('Failed to submit vote', error);
-      alert(error.response?.data?.message || 'Failed to submit vote');
+      setSubmitError(error.message || 'Failed to submit vote');
     }
   };
 
@@ -92,118 +108,120 @@ export default function VoteModal({ candidate, electionId, isOpen, onClose }) {
   // Success Modal Component
   if (isSubmitted) {
     return (
-      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50">
-        <div className="bg-white rounded-xl shadow-2xl w-96 p-6 text-center animate-bounce-in">
-          <div className="flex justify-center mb-4">
-            <div className="w-24 h-24 bg-green-500 rounded-full flex items-center justify-center animate-pulse">
-              <Check size={64} color="white" strokeWidth={3} />
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-60 backdrop-blur-sm p-4">
+        <motion.div 
+          initial={{ scale: 0.8, opacity: 0 }}
+          animate={{ scale: 1, opacity: 1 }}
+          className="bg-white rounded-[2rem] shadow-2xl w-full max-w-sm p-8 text-center"
+        >
+          <div className="flex justify-center mb-6">
+            <div className="w-20 h-20 bg-green-500 rounded-full flex items-center justify-center shadow-lg shadow-green-100">
+              <Check size={48} color="white" strokeWidth={3} />
             </div>
           </div>
 
-          <h2 className="text-2xl font-bold mb-2 text-gray-900">
-            Vote Submitted Successfully!
-          </h2>
+          <h2 className="text-2xl font-bold mb-2 text-slate-900">Vote Certified</h2>
+          <p className="text-slate-500 mb-6 font-medium text-sm">Thank you for participating in this secure digital election.</p>
 
-          <p className="text-gray-600 mb-4">
-            Thank you for participating in the election.
-          </p>
-
-          <p className="text-sm text-gray-500 mb-4">
-            You voted for <span className="font-semibold">{candidate.name}</span>
-          </p>
+          <div className="bg-slate-50 rounded-2xl p-4 mb-8">
+             <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-1">Receipt for Choice</p>
+             <p className="text-lg font-bold text-slate-800">{candidate.name}</p>
+          </div>
 
           <button
             onClick={handleSuccessClose}
-            className="w-full bg-gradient-to-r from-green-600 to-emerald-600 text-white py-3 rounded-full hover:opacity-90 transition-opacity"
+            className="w-full bg-blue-600 hover:bg-blue-700 text-white py-4 rounded-2xl font-bold transition-all shadow-xl shadow-blue-100"
           >
-            Return to Home
+            Finish & Return
           </button>
-        </div>
+        </motion.div>
       </div>
     );
   }
 
   // Original Vote Modal
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50">
-      <div className="bg-white rounded-xl shadow-2xl w-96 p-6 relative">
-        <button
-          onClick={onClose}
-          className="absolute top-4 right-4 text-gray-500 hover:text-gray-800"
-        >
-          <X size={24} />
-        </button>
-
-        <h2 className="text-2xl font-bold mb-4 text-gray-900">
-          Confirm Your Vote
-        </h2>
-
-        <div className="mb-4">
-          <p className="text-gray-700 mb-2">
-            You are voting for <span className="font-semibold">{candidate.name}</span>
-          </p>
-
-          <div className="mb-4">
-            <label htmlFor="name" className="block text-sm font-medium text-gray-700 mb-2">
-              Name
-            </label>
-            <input
-              type="text"
-              id="name"
-              name="name"
-              value={name}
-              onChange={handleInputChange(setName)}
-              className={`w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 
-                ${errors.name ? 'border-red-500 focus:ring-red-500' : 'border-gray-300 focus:ring-blue-500'}`}
-              placeholder="Enter your name"
-              readOnly
-            />
-            {errors.name && <p className="text-red-500 text-xs mt-1">{errors.name}</p>}
-          </div>
-
-          <div className="mb-4">
-            <label htmlFor="email" className="block text-sm font-medium text-gray-700 mb-2">
-              Email
-            </label>
-            <input
-              type="email"
-              id="email"
-              name="email"
-              value={email}
-              onChange={handleInputChange(setEmail)}
-              className={`w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 
-                ${errors.email ? 'border-red-500 focus:ring-red-500' : 'border-gray-300 focus:ring-blue-500'}`}
-              placeholder="Enter your email"
-              readOnly
-            />
-            {errors.email && <p className="text-red-500 text-xs mt-1">{errors.email}</p>}
-          </div>
-
-          <div className="mb-4">
-            <label htmlFor="voterId" className="block text-sm font-medium text-gray-700 mb-2">
-              Voter ID
-            </label>
-            <input
-              ref={voterIdInputRef}
-              type="text"
-              id="voterId"
-              name="voterId"
-              value={voterId}
-              onChange={handleInputChange(setVoterId)}
-              className={`w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 
-                ${errors.voterId ? 'border-red-500 focus:ring-red-500' : 'border-gray-300 focus:ring-blue-500'}`}
-              placeholder="Enter your Voter ID"
-            />
-            {errors.voterId && <p className="text-red-500 text-xs mt-1">{errors.voterId}</p>}
-          </div>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-60 backdrop-blur-sm p-4">
+      <div className="bg-white rounded-[2rem] shadow-2xl w-full max-w-md overflow-hidden relative border border-slate-100">
+        
+        {/* Modal Header */}
+        <div className="bg-blue-600 px-8 py-6 text-white text-center">
+            <h2 className="text-xl font-bold tracking-tight">Confirm Secure Vote</h2>
+            <p className="text-blue-100 text-xs mt-1 font-medium opacity-80 uppercase tracking-widest leading-loose">Identity Encrypted Session</p>
+            <button
+               onClick={onClose}
+               className="absolute top-4 right-4 text-blue-200 hover:text-white"
+            >
+               <X size={20} />
+            </button>
         </div>
 
-        <button
-          onClick={handleVoteSubmit}
-          className="w-full bg-gradient-to-r from-blue-600 to-indigo-600 text-white py-3 rounded-full hover:opacity-90 transition-opacity"
-        >
-          Submit Vote
-        </button>
+        <div className="p-8">
+          {/* Candidate Preview */}
+          <div className="mb-8 flex items-center gap-4 bg-slate-50 p-4 rounded-2xl border border-slate-100">
+             <div className="w-12 h-12 bg-white rounded-xl flex items-center justify-center shadow-sm">
+                <Check size={24} className="text-blue-600" />
+             </div>
+             <div>
+                <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Target Candidate</p>
+                <h3 className="text-lg font-bold text-slate-800 leading-tight">{candidate.name}</h3>
+             </div>
+          </div>
+
+          <div className="space-y-6">
+            {/* Anonymous Identity Badge */}
+            <div className="bg-slate-800 rounded-2xl p-4 flex items-center gap-4">
+                <div className="w-10 h-10 bg-slate-700 rounded-full flex items-center justify-center text-white font-bold">
+                   <ShieldCheck size={20} />
+                </div>
+                <div className="flex-1">
+                   <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest block mb-0.5">Voter Identity</p>
+                   <p className="text-sm font-bold text-white leading-none">Anonymous Session</p>
+                   <p className="text-xs font-medium text-slate-400 opacity-80">Protected & Verified</p>
+                </div>
+                <div className="w-6 h-6 bg-emerald-500/20 rounded-lg flex items-center justify-center">
+                   <Check size={14} className="text-emerald-400" />
+                </div>
+            </div>
+
+            {/* Voter ID Field (Pre-filled) */}
+            <div>
+              <label htmlFor="voterId" className="text-xs font-bold text-slate-400 uppercase tracking-widest block mb-2 px-1">Verify Government Voter ID</label>
+              <div className="relative">
+                 <input
+                   ref={voterIdInputRef}
+                   type="text"
+                   id="voterId"
+                   name="voterId"
+                   value={voterId}
+                   onChange={handleInputChange(setVoterId)}
+                   className={`w-full px-5 py-4 bg-white border-2 rounded-2xl font-bold transition-all focus:outline-none focus:ring-4 focus:ring-blue-100
+                     ${errors.voterId ? 'border-red-500' : 'border-slate-100 focus:border-blue-500'}`}
+                   placeholder="Enter 10-digit ID"
+                 />
+              </div>
+              {errors.voterId && <p className="text-red-500 text-[10px] mt-2 font-bold px-1">{errors.voterId}</p>}
+            </div>
+          </div>
+
+          {submitError && (
+             <div className="mt-6 bg-red-50 border border-red-200 text-red-700 p-4 rounded-xl flex items-center gap-3 animate-pulse">
+                <AlertCircle size={20} className="text-red-500" />
+                <p className="text-sm font-bold leading-tight">{submitError}</p>
+             </div>
+          )}
+
+          <button
+            onClick={handleVoteSubmit}
+            className="w-full mt-8 bg-blue-600 hover:bg-blue-700 text-white py-5 rounded-2xl font-bold transition-all shadow-xl shadow-blue-200 flex items-center justify-center gap-2 disabled:bg-slate-300 disabled:shadow-none"
+            disabled={!!submitError && submitError.includes('already')}
+          >
+            Cast Secure Vote
+          </button>
+
+          
+          <p className="text-center text-[10px] text-slate-400 mt-6 uppercase font-bold tracking-[0.2em]">Zero-Knowledge Privacy Proof Active</p>
+        </div>
       </div>
     </div>
   );

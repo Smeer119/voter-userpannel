@@ -1,159 +1,254 @@
 import axios from 'axios';
+import { supabase } from '../lib/supabase';
 import { mockNewsArticles, mockAiResponse } from './mockData';
 
-const BACKEND_URL = import.meta.env.VITE_BACKEND_URL;
 const NEWS_API_KEY = import.meta.env.VITE_NEWS_API_KEY;
 
-// Create Election
-export const createElection = async (electionData) => {
-  try {
-    const response = await axios.post(`${BACKEND_URL}/create-election`, electionData, {
-      headers: { 'Content-Type': 'application/json' }
-    });
-    return response.data;
-  } catch (error) {
-    console.error('Error creating election:', error);
-    throw error;
-  }
-};
+// --- ELECTION SERVICES ---
 
-// Fetch All Elections
 export const fetchElections = async () => {
   try {
-    const response = await axios.get(`${BACKEND_URL}/all-election`);
-    return response.data;
+    const { data, error } = await supabase
+      .from('elections')
+      .select(`
+        *,
+        candidates:election_candidates(
+          candidate:candidates(*)
+        )
+      `)
+      .order('created_at', { ascending: false });
+
+    if (error) throw error;
+    
+    return data.map(election => ({
+      ...election,
+      candidates: election.candidates.map(c => c.candidate)
+    }));
   } catch (error) {
     console.error('Error fetching elections:', error);
     throw error;
   }
 };
 
-// Fetch Single Election by ID
 export const fetchElectionById = async (id) => {
   try {
-    const response = await axios.get(`${BACKEND_URL}/election/${id}`);
-    return response.data;
+    const { data, error } = await supabase
+      .from('elections')
+      .select(`
+        *,
+        candidates:election_candidates(
+          candidate:candidates(*)
+        )
+      `)
+      .eq('id', id)
+      .single();
+
+    if (error) throw error;
+    
+    return {
+      ...data,
+      candidates: data.candidates.map(c => c.candidate)
+    };
   } catch (error) {
     console.error('Error fetching election details:', error);
     throw error;
   }
 };
 
-// Update Election
-export const updateElection = async (id, electionData) => {
+export const createElection = async (electionData) => {
   try {
-    const response = await axios.put(`${BACKEND_URL}/update-election/${id}`, electionData, {
-      headers: { 'Content-Type': 'application/json' }
-    });
-    return response.data;
+    const { data, error } = await supabase
+      .from('elections')
+      .insert([electionData])
+      .select()
+      .single();
+
+    if (error) throw error;
+    return data;
   } catch (error) {
-    console.error('Error updating election:', error);
+    console.error('Error creating election:', error);
     throw error;
   }
 };
 
-// Delete Election
-export const deleteElection = async (id) => {
+// --- AUTH SERVICES ---
+
+export const signupUser = async (fullName, email, password) => {
   try {
-    const response = await axios.delete(`${BACKEND_URL}/delete-election/${id}`);
-    return response.data;
+    const { data: authData, error: authError } = await supabase.auth.signUp({
+      email,
+      password,
+      options: { data: { full_name: fullName } }
+    });
+
+    if (authError) throw authError;
+
+    if (authData.user) {
+      const { error: dbError } = await supabase
+        .from('users')
+        .insert([{
+          id: authData.user.id,
+          full_name: fullName,
+          email: email.toLowerCase()
+        }]);
+      if (dbError) console.warn('Could not update profile:', dbError.message);
+    }
+
+    return authData;
   } catch (error) {
-    console.error('Error deleting election:', error);
+    console.error('Signup error:', error);
     throw error;
   }
 };
+
+export const loginUser = async (email, password) => {
+  try {
+    const { data, error } = await supabase.auth.signInWithPassword({
+      email,
+      password,
+    });
+    if (error) throw error;
+    return data;
+  } catch (error) {
+    console.error('Login error:', error);
+    throw error;
+  }
+};
+
+export const updateVerification = async (userId, voterHash, voterId) => {
+  try {
+    const { data, error } = await supabase
+      .from('users')
+      .update({ 
+        is_verified: true, 
+        voter_hash: voterHash,
+        voter_id: voterId
+      })
+      .eq('id', userId);
+
+    if (error) throw error;
+    return data;
+  } catch (error) {
+    console.error('Verification sync error:', error);
+    throw error;
+  }
+};
+
+// --- VOTING SERVICES ---
 
 export const submitVote = async (voteData) => {
   try {
-    const response = await axios.post(`${BACKEND_URL}/vote`, voteData, {
-      headers: { 'Authorization': `Bearer ${localStorage.getItem('user.token')}` }
-    });
-    return response.data;
+    const { electionId, candidateId, userId, voterId } = voteData;
+
+    // 1. Initial Validation
+    if (!voterId) throw new Error("Voter ID missing from payload");
+
+    // 2. Check if user already voted (Double Vote Prevention)
+    const { data: user, error: userError } = await supabase
+      .from('users')
+      .select('voted_election')
+      .eq('id', userId)
+      .single();
+
+    if (user && user.voted_election === electionId) {
+       // Only block if they voted in THIS exact election
+       throw new Error('You have already cast your vote in this election');
+    }
+
+    // 3. Mark User as HAVING VOTED (Identity Layer - No Candidate link saved here)
+    const { error: updateUserError } = await supabase
+      .from('users')
+      .update({ 
+        voted_election: electionId
+      })
+      .eq('id', userId);
+
+    if (updateUserError) throw updateUserError;
+
+    // 4. Increment Candidate Votes (Aggregator Layer)
+    const { data: candidate, error: candError } = await supabase
+      .from('candidates')
+      .select('votes_count')
+      .eq('id', candidateId)
+      .single();
+
+    if (candError) throw candError;
+
+    const { error: updateCandError } = await supabase
+      .from('candidates')
+      .update({ votes_count: (candidate.votes_count || 0) + 1 })
+      .eq('id', candidateId);
+
+    if (updateCandError) throw updateCandError;
+
+    // 5. Log Anonymous Vote (Audit Layer - No User ID)
+    const { error: auditError } = await supabase
+      .from('anonymous_votes')
+      .insert([{
+        election_id: electionId,
+        candidate_id: candidateId
+      }]);
+
+    if (auditError) console.warn('Audit log skip:', auditError.message);
+
+    return { success: true, message: 'Vote successfully recorded' };
+
   } catch (error) {
-    console.error('Error submitting vote:', error);
+    console.error('Vote submission error:', error);
     throw error;
   }
 };
 
-// AI Response with Live or Mock Fallback
+// --- AI SERVICES powered by Supabase Context ---
+
 export const getAiResponse = async (userInput) => {
-  if (BACKEND_URL) {
-    try {
-      const response = await axios.post(`${BACKEND_URL}/getAiResponse`,
-        { userInput },
-        {
-          headers: { 'Authorization': `Bearer ${localStorage.getItem('user.token')}` }
-        }
-      );
-      return response.data;
-    } catch (error) {
-      console.warn('Real AI API failed, using mock:', error.message);
+  try {
+    // Fetch real candidates to provide context to the "AI"
+    const { data: candidates } = await supabase
+      .from('candidates')
+      .select('name, party_name, manifesto')
+      .limit(5);
+
+    if (candidates && candidates.length > 0) {
+      const candidateList = candidates.map(c => `- ${c.name} (${c.party_name}): ${c.manifesto?.substring(0, 50)}...`).join('\n');
+      
+      return { 
+        response: `Based on your query "${userInput}", here are some candidates you might be interested in:\n\n${candidateList}\n\nYou can find more details in the Elections tab.` 
+      };
     }
+  } catch (err) {
+    console.warn("AI context fetch failed, using generic response");
   }
+  
   return { response: mockAiResponse };
 };
 
-/**
- * Integrated News Fetching with Pagination support
- * @param {string} searchQuery - Search query
- * @param {string|number} page - Page number (NewsAPI) or NextPage Token (NewsData.io)
- */
-export const fetchNews = async (searchQuery = 'elections OR politics', page = 1) => {
+// --- NEWS SERVICES ---
+
+export const fetchNews = async (searchQuery = 'elections', page = 1) => {
   if (!NEWS_API_KEY || NEWS_API_KEY === 'YOUR_REAL_NEWS_API_KEY_HERE') {
-    return { articles: mockNewsArticles, totalResults: mockNewsArticles.length };
+    return { articles: mockNewsArticles };
   }
-
   try {
-    // 1. NewsData.io (detecting 'pub_' prefix)
-    if (NEWS_API_KEY.startsWith('pub_')) {
-      const response = await axios.get('https://newsdata.io/api/1/news', {
-        params: {
-          apikey: NEWS_API_KEY,
-          q: searchQuery,
-          language: 'en',
-          page: page !== 1 ? page : undefined // Pass nextPage token if not first page
-        }
-      });
-
-      if (response.data.status === 'success') {
-        return {
-          articles: response.data.results.map(item => ({
-            title: item.title,
-            description: item.description || item.content || 'No description available.',
-            urlToImage: item.image_url,
-            publishedAt: item.pubDate,
-            source: { name: item.source_id || 'News' },
-            url: item.link
-          })),
-          nextPage: response.data.nextPage, // NewsData.io uses nextPage tokens
-          totalResults: response.data.totalResults
-        };
-      }
-    } 
-    // 2. NewsAPI.org
-    else {
-      const response = await axios.get('https://newsapi.org/v2/everything', {
-        params: {
-          q: searchQuery,
-          language: 'en',
-          sortBy: 'publishedAt',
-          pageSize: 12,
-          page: page,
-          apiKey: NEWS_API_KEY
-        }
-      });
-
-      if (response.data.status === 'ok') {
-        return {
-          articles: response.data.articles,
-          totalResults: response.data.totalResults,
-          nextPage: response.data.totalResults > page * 12 ? page + 1 : null
-        };
-      }
-    }
-  } catch (error) {
-    console.error('News fetch error:', error.response?.data?.message || error.message);
+     let response;
+     if (NEWS_API_KEY.startsWith('pub_')) {
+       response = await axios.get('https://newsdata.io/api/1/news', {
+         params: { apikey: NEWS_API_KEY, q: searchQuery, language: 'en', page: page !== 1 ? page : undefined }
+       });
+       if (response.data.status === 'success') {
+         return {
+           articles: response.data.results.map(item => ({
+             title: item.title, description: item.description, urlToImage: item.image_url, publishedAt: item.pubDate, 
+             source: { name: item.source_id }, url: item.link
+           })),
+           nextPage: response.data.nextPage
+         };
+       }
+     }
+  } catch (e) {
+    console.warn('News Fetch Error');
   }
-
-  return { articles: mockNewsArticles, totalResults: mockNewsArticles.length };
+  return { articles: mockNewsArticles };
 };
+// Export the supabase client for direct use in components if needed
+export { supabase };

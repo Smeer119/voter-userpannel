@@ -3,7 +3,7 @@ import { motion } from "framer-motion";
 import { Link, useNavigate, useLocation } from "react-router-dom";
 import { useDispatch } from "react-redux";
 import { login } from "../../store/userSlice";
-import axios from "axios";
+import { loginUser, supabase } from "../services/api";
 
 const Login = () => {
   const [formData, setFormData] = useState({
@@ -15,7 +15,6 @@ const Login = () => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const navigate = useNavigate();
-  const BACKEND_URL = import.meta.env.VITE_BACKEND_URL;
 
   const location = useLocation();
 
@@ -49,23 +48,18 @@ const Login = () => {
     setError("");
 
     try {
-      const response = await axios.post(`${BACKEND_URL}/login`, formData);
+      const data = await loginUser(formData.email, formData.password);
 
-      console.log("Login successful:", response.data);
-      localStorage.setItem("userId", response.data.user._id);
-      localStorage.setItem('userName', response.data.user.fullName);
-      localStorage.setItem('userEmail', response.data.user.email);
-      dispatch(login());
-      localStorage.setItem("isLogin", true);
-      navigate("/");
-    } catch (err) {
-      if (err.response) {
-        setError(err.response.data.error || "Login failed");
-      } else if (err.request) {
-        setError("No response from server");
-      } else {
-        setError("Error setting up request");
+      if (data.user) {
+        localStorage.setItem("userId", data.user.id);
+        localStorage.setItem('userName', data.user.user_metadata?.full_name || data.user.email);
+        localStorage.setItem('userEmail', data.user.email);
+        dispatch(login());
+        localStorage.setItem("isLogin", true);
+        navigate("/");
       }
+    } catch (err) {
+      setError(err.message || "Login failed");
     } finally {
       setLoading(false);
     }
@@ -74,10 +68,14 @@ const Login = () => {
 
 
 
-  const handleGoogleLogin = () => {
-    window.open(`${BACKEND_URL}/auth/google`, "_self");
-    localStorage.setItem("isLogin", true);
-    dispatch(login());
+  const handleGoogleLogin = async () => {
+    const { error } = await supabase.auth.signInWithOAuth({
+      provider: 'google',
+      options: {
+        redirectTo: `${window.location.origin}/`
+      }
+    });
+    if (error) console.error("Google login error:", error.message);
   };
 
   return (

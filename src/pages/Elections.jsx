@@ -98,7 +98,7 @@ export default function Elections() {
         >
           {elections.map((election) => (
             <motion.div
-              key={election._id}
+              key={election.id}
               variants={itemVariants}
               whileHover={{ scale: 1.05 }}
               className="bg-white rounded-2xl shadow-lg overflow-hidden hover:shadow-xl transition-all"
@@ -123,9 +123,9 @@ export default function Elections() {
                 <div className="flex items-center text-gray-600 mb-2">
                   <Clock size={18} className="mr-2 text-blue-500" />
                   <span>
-                    {new Date(election.startDate).toLocaleDateString()}
+                    {new Date(election.start_date || election.startDate).toLocaleDateString()}
                     {' - '}
-                    {new Date(election.endDate).toLocaleDateString()}
+                    {new Date(election.end_date || election.endDate).toLocaleDateString()}
                   </span>
                 </div>
 
@@ -139,7 +139,7 @@ export default function Elections() {
                 </p>
 
                 <button
-                  onClick={() => handleElectionClick(election._id)}
+                  onClick={() => handleElectionClick(election.id)}
                   className="w-full flex items-center justify-center px-6 py-3 bg-gradient-to-r from-blue-600 to-indigo-600 text-white rounded-full hover:opacity-90 transition-opacity"
                 >
                   View Candidates

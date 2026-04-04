@@ -102,7 +102,7 @@ export default function ElectionDetails() {
         >
           {election.candidates.map((candidate) => (
             <motion.div
-              key={candidate._id}
+              key={candidate.id}
               variants={itemVariants}
               whileHover={{ scale: 1.05 }}
               className="bg-white rounded-2xl shadow-lg overflow-hidden hover:shadow-xl transition-all"
@@ -114,7 +114,7 @@ export default function ElectionDetails() {
                   className="w-full h-64 object-cover"
                 />
                 <div className="absolute top-4 right-4 bg-white/80 backdrop-blur-sm rounded-full px-3 py-1 text-sm font-medium text-gray-800">
-                  {candidate.partyName}
+                  {candidate.party_name}
                 </div>
               </div>
 

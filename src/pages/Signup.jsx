@@ -1,9 +1,9 @@
 import React, { useState, useEffect } from "react";
 import { motion } from "framer-motion";
 import { Link, useLocation, useNavigate } from "react-router-dom";
-import axios from "axios";
 import { useDispatch } from "react-redux";
 import { login } from "../../store/userSlice.js";
+import { signupUser, supabase } from "../services/api";
 
 const Signup = () => {
   const dispatch = useDispatch();
@@ -20,8 +20,6 @@ const Signup = () => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState(false);
-
-  const BACKEND_URL = import.meta.env.VITE_BACKEND_URL;
 
   useEffect(() => {
     const queryParams = new URLSearchParams(location.search);
@@ -47,10 +45,14 @@ const Signup = () => {
     });
   };
 
-  const googlSignUp = () => {
-    window.open(`${BACKEND_URL}/auth/google`, "_self");
-    localStorage.setItem("isLogin", true);
-    dispatch(login());
+  const googlSignUp = async () => {
+    const { error } = await supabase.auth.signInWithOAuth({
+      provider: 'google',
+      options: {
+        redirectTo: `${window.location.origin}/verify`
+      }
+    });
+    if (error) console.error("Google login error:", error.message);
   };
 
   const handleSubmit = async (e) => {
@@ -72,24 +74,26 @@ const Signup = () => {
       setLoading(true);
       setError("");
 
-      const response = await axios.post(`${BACKEND_URL}/signup`, formattedData);
+      const data = await signupUser(
+        formattedData.fullName,
+        formattedData.email,
+        formattedData.password
+      );
 
-      if (response.status === 201) {
-        localStorage.setItem("userId", response.data.user._id);
-        localStorage.setItem('userName', response.data.user.fullName);
-        localStorage.setItem('userEmail', response.data.user.email);
+      if (data.user) {
+        localStorage.setItem("userId", data.user.id);
+        localStorage.setItem('userName', data.user.user_metadata.full_name);
+        localStorage.setItem('userEmail', data.user.email);
         dispatch(login());
         localStorage.setItem("isLogin", true);
 
         setSuccess(true);
         setTimeout(() => {
-          navigate("/"); // Redirect to home page instead of login page
+          navigate("/verify"); 
         }, 2000);
       }
     } catch (err) {
-      const errorMessage =
-        err.response?.data?.message || "Registration failed. Please try again.";
-
+      const errorMessage = err.message || "Registration failed. Please try again.";
       console.error("Registration error:", errorMessage);
       setError(errorMessage);
     } finally {
