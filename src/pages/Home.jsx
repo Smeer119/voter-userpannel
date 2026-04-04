@@ -1,5 +1,6 @@
 import React, { useEffect } from 'react';
 import HeroSection from '../components/HeroSection';
+import BlockchainAuditor from '../components/BlockchainAuditor';
 import ElectionSection from '../components/ElectionSection';
 import VotingFAQSection from '../components/FAQSection';
 import FooterSection from '../components/FooterSection';
@@ -41,10 +42,15 @@ const LandingPage = () => {
     <main className="relative min-h-screen pt-20 overflow-hidden">
       <BackgroundGradient />
       <HeroSection />
+      
+      {/* HACKATHON: High-visibility Blockchain Verification Component inserted here */}
+      <div className="relative z-10 container mx-auto px-4 mb-16">
+        <BlockchainAuditor />
+      </div>
+
       <ElectionSection />
       <VotingFAQSection />
       <FooterSection />
-
     </main>
   );
 };

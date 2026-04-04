@@ -16,7 +16,12 @@ import Verification from "./pages/Verification";
 import { useEffect } from "react";
 import { supabase } from "./services/api";
 
+import { useDispatch } from "react-redux";
+import { login } from "../store/userSlice";
+
 function AppContent() {
+  const dispatch = useDispatch();
+
   useEffect(() => {
     // Self-healing Session Sync: Ensure LocalStorage is ALWAYS in sync with Supabase Cloud
     const syncSession = async () => {
@@ -26,6 +31,7 @@ function AppContent() {
         localStorage.setItem("userEmail", session.user.email);
         localStorage.setItem("isLogin", "true");
         localStorage.setItem("userName", session.user.user_metadata?.full_name || "Voter");
+        dispatch(login());
       }
     };
 
@@ -35,14 +41,18 @@ function AppContent() {
     const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
       if (event === 'SIGNED_IN' && session) {
         localStorage.setItem("userId", session.user.id);
+        localStorage.setItem("userEmail", session.user.email);
         localStorage.setItem("isLogin", "true");
+        localStorage.setItem("userName", session.user.user_metadata?.full_name || "Voter");
+        dispatch(login());
       } else if (event === 'SIGNED_OUT') {
         localStorage.clear();
+        // optionally dispatch a logout action here if you have one
       }
     });
 
     return () => subscription.unsubscribe();
-  }, []);
+  }, [dispatch]);
 
   return (
     <>

@@ -1,6 +1,7 @@
 import axios from 'axios';
 import { supabase } from '../lib/supabase';
 import { mockNewsArticles, mockAiResponse } from './mockData';
+import { Block } from '../utils/blockchain.js';
 
 const NEWS_API_KEY = import.meta.env.VITE_NEWS_API_KEY;
 
@@ -181,7 +182,37 @@ export const submitVote = async (voteData) => {
 
     if (updateCandError) throw updateCandError;
 
-    // 5. Log Anonymous Vote (Audit Layer - No User ID)
+    // 5. BLOCKCHAIN IMMUTABILITY LOGGING (The Hackathon Feature)
+    const { data: latestBlock, error: latestError } = await supabase
+      .from('blockchain_votes')
+      .select('*')
+      .order('index', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    let prevHash = "0";
+    let newIndex = 0;
+    if (latestBlock) {
+      prevHash = latestBlock.hash;
+      newIndex = latestBlock.index + 1;
+    }
+
+    const newBlock = new Block(newIndex, voterId, candidateId, prevHash);
+
+    const { error: blockchainError } = await supabase
+      .from('blockchain_votes')
+      .insert([{
+        index: newBlock.index,
+        timestamp: newBlock.timestamp,
+        voter_id: newBlock.voterId,
+        candidate: newBlock.candidate,
+        previous_hash: newBlock.previousHash,
+        hash: newBlock.hash
+      }]);
+
+    if (blockchainError) throw blockchainError;
+
+    // 6. Log Anonymous Vote (Audit Layer - No User ID)
     const { error: auditError } = await supabase
       .from('anonymous_votes')
       .insert([{
